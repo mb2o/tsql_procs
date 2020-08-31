@@ -1,17 +1,15 @@
 /********************************************************************************************************
     NAME:           usp_ReadCommandLog
 
-    SYNOPSIS:       Retrieves information from Ola Hallengrens' Command Log table.
+    SYNOPSIS:       Retrieves information from Ola Hallengren's Command Log table.
 
-    DEPENDENCIES:   The following dependencies are required to execute this script:
-                    - SQL Server 2005 or newer
+    DEPENDENCIES:   Ola Hallengren's maintenance solution must be present.
                     
 	PARAMETERS:     Required:
 					@DatabaseName must be provided in order to function correctly. 
             
                     Optional:
-					@Days can be provided to go back in time further.
-					Defaults to 1.
+					@Days can be provided to go back in time further. Defaults to 1.
 	
 	NOTES:			
 
@@ -25,7 +23,7 @@
     
     USAGE:          EXEC dbo.usp_ReadCommandLog
                         @DatabaseName = 'HIX_PRODUCTIE', 
-						@Days = 7;
+						@Days = 7; -- Shows all work done in the past week
 
     ----------------------------------------------------------------------------
     DISCLAIMER: 
