@@ -52,7 +52,7 @@ BEGIN
                WHEN 2 THEN
                    'Nonclustered'
                ELSE
-                   'Heap'
+                   'Unknown'
            END AS IndexType,
            ExtendedInfo.value('(/ExtendedInfo/PageCount/text())[1]', 'int') AS [Pages],
            ExtendedInfo.value('(/ExtendedInfo/Fragmentation/text())[1]', 'float') AS [Fragmentation],
