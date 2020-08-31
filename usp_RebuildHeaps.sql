@@ -1,7 +1,9 @@
 /********************************************************************************************************
     NAME:           usp_RebuildHeaps
 
-    SYNOPSIS:       This proc can be used to 
+    SYNOPSIS:       A heap is a table without a clustered index. This proc can be used to 
+                    rebuild those heaps on a database. Thereby alleviating the problems that arise 
+                    from large numbers of Forwarding Records on a heap.
 
     DEPENDENCIES:   The following dependencies are required to execute this script:
 
@@ -49,7 +51,7 @@
 
 CREATE OR ALTER PROC dbo.usp_RebuildHeaps
     @DatabaseName NVARCHAR(100),
-    @MinNumberOfPages INT = 1000,
+    @MinNumberOfPages INT = 0,
     @ProcessHeapCount INT = 2,
     @DryRun TINYINT = 1
 AS
@@ -129,12 +131,13 @@ BEGIN
                 = N'
 				DECLARE heaps CURSOR GLOBAL STATIC FOR
 					SELECT i.object_id 
-					FROM ' + QUOTENAME(DB_NAME(@db_id)) + N'.sys.indexes AS i 
-					INNER JOIN ' + QUOTENAME(DB_NAME(@db_id))
+					FROM ' + QUOTENAME(@db_name) + N'.sys.indexes AS i 
+					INNER JOIN ' + QUOTENAME(@db_name)
                   + N'.sys.objects AS o ON o.object_id = i.object_id
 					WHERE i.type_desc = ''HEAP''
 						AND o.type_desc = ''USER_TABLE''
 			';
+            RAISERROR(@sql, 10, 1) WITH NOWAIT;
             EXECUTE sp_executesql @sql;
 
             OPEN heaps;
@@ -161,7 +164,7 @@ BEGIN
                        P.forwarded_record_count,
                        (CAST(P.forwarded_record_count AS DECIMAL(10, 2)) / CAST(P.record_count AS DECIMAL(10, 2)))
                        * 100
-                FROM sys.dm_db_index_physical_stats(@db_id, @object_id, 0, NULL, 'DETAILED') AS P
+                FROM sys.dm_db_index_physical_stats(DB_ID(@db_name), @object_id, 0, NULL, 'DETAILED') AS P
                 WHERE P.page_count > @MinNumberOfPages
                       AND P.forwarded_record_count > 0;
             END;
@@ -180,7 +183,7 @@ BEGIN
     IF @DryRun = 1
         RAISERROR('Performing a dry run. Nothing will be executed or logged...', 10, 1) WITH NOWAIT;
 
-    RAISERROR('Starting the actual hard work', 10, 1) WITH NOWAIT;
+    RAISERROR('Starting actual hard work', 10, 1) WITH NOWAIT;
 
     SELECT @db_id = d.database_id
     FROM sys.databases AS d
@@ -244,13 +247,13 @@ BEGIN
         -- Remove processed heap from working table
         IF @DryRun = 0
         BEGIN
-            DELETE FROM FragmentedHeaps
-            WHERE object_id = @object_id;
+            DELETE FROM dbo.FragmentedHeaps
+            WHERE object_id = @object_id;  
         END;
 
         IF @DryRun = 0
         BEGIN
-            SET @sql = QUOTENAME(@schema_name) + N'.' + QUOTENAME(@table_name);
+            SET @sql = QUOTENAME(@DatabaseName) + N'.' + QUOTENAME(@schema_name) + N'.' + QUOTENAME(@table_name);
             EXECUTE sp_recompile @sql;
         END;
 
@@ -260,8 +263,19 @@ BEGIN
     CLOSE worklist;
     DEALLOCATE worklist;
 
+    -- Delete working table when no rows present
+    DECLARE @rows INT = 0;
+    SELECT @rows = COUNT(*)
+    FROM dbo.FragmentedHeaps;
+
+    IF @rows = 0
+    BEGIN
+        DROP TABLE dbo.FragmentedHeaps;
+    RAISERROR('No rows in table. Cleaning up...', 10, 1) WITH NOWAIT;
+    END
+
     ----------------------------------------------------------------------------------------------------
-    -- Log completing information
+    -- Log information
     ----------------------------------------------------------------------------------------------------
 
     Logging:
