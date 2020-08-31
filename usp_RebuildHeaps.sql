@@ -47,6 +47,7 @@
  --  DATE       VERSION     AUTHOR                  DESCRIPTION                                        --
  ---------------------------------------------------------------------------------------------------------
      20200103   1.0         Mark Boomaars			Open Sourced on GitHub
+     20200831   1.1         Mark Boomaars           Changes to logic and logging
 *********************************************************************************************************/
 
 CREATE OR ALTER PROC dbo.usp_RebuildHeaps
