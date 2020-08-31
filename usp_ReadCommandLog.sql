@@ -1,7 +1,7 @@
 /********************************************************************************************************
     NAME:           usp_ReadCommandLog
 
-    SYNOPSIS:       Retrieves information from Ola Hellengrens' Command Log table.
+    SYNOPSIS:       Retrieves information from Ola Hallengrens' Command Log table.
 
     DEPENDENCIES:   The following dependencies are required to execute this script:
                     - SQL Server 2005 or newer
@@ -21,7 +21,7 @@
     
     VERSION:        1.0
 
-    LICENSE:        Apache License v2
+    LICENSE:        MIT
     
     USAGE:          EXEC dbo.usp_ReadCommandLog
                         @DatabaseName = 'HIX_PRODUCTIE', 

@@ -1,224 +1,278 @@
-create procedure dbo.sp_RebuildHeaps 
-	@DatabaseName            nvarchar(100) = null, 
-	@MinNumberOfPages        int           = 1000, 
-	@LogToTable              nvarchar(max) = 'N', 
-	@LogMessagePriority      nvarchar(max) = 100, 
-	@LogMessageFindingsGroup nvarchar(max) = 'Maintenance', 
-	@LogMessageFinding       nvarchar(max) = 'Rebuild Heap', 
-	@DryRun                  nvarchar(max) = 'N'
-as
-begin
+/********************************************************************************************************
+    NAME:           usp_RebuildHeaps
 
-	----------------------------------------------------------------------------------------------------
-	--// Source:  https://www.bravisziekenhuis.nl                                                   //--
-	--// License: MIT																				//--
-	--// Author:  M. Boomaars																		//--
-	--// Version: 2020-01-03 13:00																	//--
-	----------------------------------------------------------------------------------------------------
+    SYNOPSIS:       This proc can be used to 
 
-	set nocount on;
-	set arithabort on;
-	set numeric_roundabort off;
+    DEPENDENCIES:   The following dependencies are required to execute this script:
 
-	declare @db_id                    int, 
-			@db_name                  sysname        = @DatabaseName, 
-			@object_id                int, 
-			@schema_name              sysname, 
-			@table_name               sysname, 
-			@page_count               bigint, 
-			@record_count             bigint, 
-			@forwarded_record_count   bigint, 
-			@forwarded_record_percent decimal(10, 2), 
-			@sql                      nvarchar(max), 
-			@msg                      nvarchar(max), 
-			@EndMessage               nvarchar(max), 
-			@ErrorMessage             nvarchar(max), 
-			@EmptyLine                nvarchar(max)  = CHAR(9), 
-			@Error                    int            = 0, 
-			@ReturnCode               int            = 0, 
-			@startTime                datetime;
+	PARAMETERS:     Required:
+                    @DatabaseName specifies on which database the heaps should be rebuilt.
+                    
+                    Optional:
+                    @MinNumberOfPages specifies the minimum number of pages required on the heap
+                    to be taken into account
 
+                    @ProcessHeapCount specifies the number of heaps that should be rebuild. 
+                    Processing large heaps can have a negative effect on the performance
+                    of your system. Also be aware that your logshipping processes can be greatly
+                    affected by rebuilding heaps as all changes need to be replicated.
 
-	if @DatabaseName is null
-	begin
-		set @ErrorMessage = 'The @DatabaseName parameter must be specified and cannot be NULL. Stopping execution...';
-		raiserror('%s', 16, 1, @ErrorMessage) with nowait;
-		set @Error = @@ERROR;
-		raiserror(@EmptyLine, 10, 1) with nowait;
-	end;
+                    @DryRun specifies whether the actual query should be executed or just 
+                    printed to the screen
+	
+	NOTES:			
 
-	if @Error <> 0
-	begin
-		set @ReturnCode = @Error;
-		goto Logging;
-	end;
+    AUTHOR:         Mark Boomaars, http://www.bravisziekenhuis.nl
+    
+    CREATED:        2020-01-03
+    
+    VERSION:        1.0
 
-	-- Prepare our working table
-	------------------------------------------------------------------------------------------------------
-	if OBJECT_ID(N'FragmentedHeaps', N'U') is null
-	begin
-		raiserror('Creating work table', 10, 1) with nowait;
+    LICENSE:        MIT
+    
+    USAGE:          EXEC dbo.usp_RebuildHeaps
+                        @DatabaseName = 'HIX_PRODUCTIE', 
+						@@DryRun = 0;
 
-		create table FragmentedHeaps
-		(
-			object_id                int not null, 
-			page_count               bigint not null, 
-			record_count             bigint not null, 
-			forwarded_record_count   bigint not null, 
-			forwarded_record_percent decimal(10, 2));
+    ----------------------------------------------------------------------------
+    DISCLAIMER: 
+    This code and information are provided "AS IS" without warranty of any kind,
+    either expressed or implied, including but not limited to the implied 
+    warranties or merchantability and/or fitness for a particular purpose.
+    ----------------------------------------------------------------------------
 
-		declare heapdb cursor static
-		for select d.database_id, 
-				   d.name
-			from sys.databases as d
-			where d.name = @db_name;
+ ---------------------------------------------------------------------------------------------------------
+ --  DATE       VERSION     AUTHOR                  DESCRIPTION                                        --
+ ---------------------------------------------------------------------------------------------------------
+     20200103   1.0         Mark Boomaars			Open Sourced on GitHub
+*********************************************************************************************************/
 
-		open heapdb;
+CREATE OR ALTER PROC dbo.usp_RebuildHeaps
+    @DatabaseName NVARCHAR(100),
+    @MinNumberOfPages INT = 1000,
+    @ProcessHeapCount INT = 2,
+    @DryRun TINYINT = 1
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET ARITHABORT ON;
+    SET NUMERIC_ROUNDABORT OFF;
 
-		while 1 = 1
-		begin
-			fetch next from heapdb into @db_id, 
-										@db_name;
+    DECLARE @db_id INT,
+            @db_name sysname = @DatabaseName,
+            @object_id INT,
+            @schema_name sysname,
+            @table_name sysname,
+            @page_count BIGINT,
+            @record_count BIGINT,
+            @forwarded_record_count BIGINT,
+            @forwarded_record_percent DECIMAL(10, 2),
+            @sql NVARCHAR(MAX),
+            @msg NVARCHAR(MAX),
+            @EndMessage NVARCHAR(MAX),
+            @ErrorMessage NVARCHAR(MAX),
+            @EmptyLine NVARCHAR(MAX) = CHAR(9),
+            @Error INT = 0,
+            @ReturnCode INT = 0;
 
-			if @@FETCH_STATUS <> 0
-				break;
+    IF @DatabaseName IS NULL
+    BEGIN
+        SET @ErrorMessage = N'The @DatabaseName parameter must be specified and cannot be NULL. Stopping execution...';
+        RAISERROR('%s', 16, 1, @ErrorMessage) WITH NOWAIT;
+        SET @Error = @@ERROR;
+        RAISERROR(@EmptyLine, 10, 1) WITH NOWAIT;
+    END;
 
-			-- Loop through all heaps
-			raiserror('Looping through all heaps', 10, 1) with nowait;
+    IF @Error <> 0
+    BEGIN
+        SET @ReturnCode = @Error;
+        GOTO Logging;
+    END;
 
-			set @sql = '
+    -------------------------------------------------------------------------------
+    -- Prepare our working table
+    -------------------------------------------------------------------------------
+    IF OBJECT_ID(N'FragmentedHeaps', N'U') IS NULL
+    BEGIN
+        RAISERROR('Creating work table', 10, 1) WITH NOWAIT;
+
+        CREATE TABLE FragmentedHeaps
+        (
+            object_id INT NOT NULL,
+            page_count BIGINT NOT NULL,
+            record_count BIGINT NOT NULL,
+            forwarded_record_count BIGINT NOT NULL,
+            forwarded_record_percent DECIMAL(10, 2)
+        );
+
+        DECLARE heapdb CURSOR STATIC FOR
+        SELECT d.database_id,
+               d.name
+        FROM sys.databases AS d
+        WHERE d.name = @db_name;
+
+        OPEN heapdb;
+
+        WHILE 1 = 1
+        BEGIN
+            FETCH NEXT FROM heapdb
+            INTO @db_id,
+                 @db_name;
+
+            IF @@FETCH_STATUS <> 0
+                BREAK;
+
+            -- Loop through all heaps
+            RAISERROR('Looping through all heaps', 10, 1) WITH NOWAIT;
+
+            SET @sql
+                = N'
 				DECLARE heaps CURSOR GLOBAL STATIC FOR
 					SELECT i.object_id 
-					FROM ' + QUOTENAME(DB_NAME(@db_id)) + '.sys.indexes AS i 
-					INNER JOIN ' + QUOTENAME(DB_NAME(@db_id)) + '.sys.objects AS o ON o.object_id = i.object_id
+					FROM ' + QUOTENAME(DB_NAME(@db_id)) + N'.sys.indexes AS i 
+					INNER JOIN ' + QUOTENAME(DB_NAME(@db_id))
+                  + N'.sys.objects AS o ON o.object_id = i.object_id
 					WHERE i.type_desc = ''HEAP''
 						AND o.type_desc = ''USER_TABLE''
 			';
-			execute sp_executesql @sql;
+            EXECUTE sp_executesql @sql;
 
-			open heaps;
+            OPEN heaps;
 
-			while 1 = 1
-			begin
-				fetch next from heaps into @object_id;
+            WHILE 1 = 1
+            BEGIN
+                FETCH NEXT FROM heaps
+                INTO @object_id;
 
-				if @@FETCH_STATUS <> 0
-					break;
+                IF @@FETCH_STATUS <> 0
+                    BREAK;
 
-				insert into FragmentedHeaps (object_id, 
-											 page_count, 
-											 record_count, 
-											 forwarded_record_count, 
-											 forwarded_record_percent) 
-				select P.object_id, 
-					   P.page_count, 
-					   P.record_count, 
-					   P.forwarded_record_count, 
-					   ( CAST(P.forwarded_record_count as decimal(10, 2)) / CAST(P.record_count as decimal(10, 2)) ) * 100
-				from sys.dm_db_index_physical_stats(@db_id, @object_id, 0, null, 'DETAILED') as P
-				where P.page_count > @MinNumberOfPages
-					  and P.forwarded_record_count > 0;
-			end;
+                INSERT INTO FragmentedHeaps
+                (
+                    object_id,
+                    page_count,
+                    record_count,
+                    forwarded_record_count,
+                    forwarded_record_percent
+                )
+                SELECT P.object_id,
+                       P.page_count,
+                       P.record_count,
+                       P.forwarded_record_count,
+                       (CAST(P.forwarded_record_count AS DECIMAL(10, 2)) / CAST(P.record_count AS DECIMAL(10, 2)))
+                       * 100
+                FROM sys.dm_db_index_physical_stats(@db_id, @object_id, 0, NULL, 'DETAILED') AS P
+                WHERE P.page_count > @MinNumberOfPages
+                      AND P.forwarded_record_count > 0;
+            END;
 
-			close heaps;
-			deallocate heaps;
-		end;
+            CLOSE heaps;
+            DEALLOCATE heaps;
+        END;
 
-		close heapdb;
-		deallocate heapdb;
-	end;
+        CLOSE heapdb;
+        DEALLOCATE heapdb;
+    END;
 
-	-- Start the actual hard work
-	------------------------------------------------------------------------------------------------------
-	if @DryRun = 'Y'
-		raiserror('Performing a dry run. Nothing will be executed or logged...', 10, 1) with nowait;
+    -------------------------------------------------------------------------------
+    -- Start actual hard work
+    -------------------------------------------------------------------------------
+    IF @DryRun = 1
+        RAISERROR('Performing a dry run. Nothing will be executed or logged...', 10, 1) WITH NOWAIT;
 
-	raiserror('Starting the hard work', 10, 1) with nowait;
+    RAISERROR('Starting the actual hard work', 10, 1) WITH NOWAIT;
 
-	select @db_id = d.database_id
-	from sys.databases as d
-	where d.name = @db_name;
+    SELECT @db_id = d.database_id
+    FROM sys.databases AS d
+    WHERE d.name = @db_name;
 
-	declare worklist cursor static
-	for select top 2 object_id, 
-					 page_count, 
-					 record_count, 
-					 forwarded_record_count, 
-					 forwarded_record_percent
-		from FragmentedHeaps
-		order by forwarded_record_percent desc;
+    DECLARE worklist CURSOR STATIC FOR
+    SELECT TOP (@ProcessHeapCount)
+           object_id,
+           page_count,
+           record_count,
+           forwarded_record_count,
+           forwarded_record_percent
+    FROM FragmentedHeaps
+    ORDER BY forwarded_record_percent DESC;
 
-	open worklist;
+    OPEN worklist;
 
-	while 1 = 1
-	begin
-		fetch next from worklist into @object_id, 
-									  @page_count, 
-									  @record_count, 
-									  @forwarded_record_count, 
-									  @forwarded_record_percent;
+    WHILE 1 = 1
+    BEGIN
+        FETCH NEXT FROM worklist
+        INTO @object_id,
+             @page_count,
+             @record_count,
+             @forwarded_record_count,
+             @forwarded_record_percent;
 
-		if @@FETCH_STATUS <> 0
-			break;
+        IF @@FETCH_STATUS <> 0
+            BREAK;
 
-		set @schema_name = OBJECT_SCHEMA_NAME(@object_id, @db_id);
-		set @table_name = OBJECT_NAME(@object_id, @db_id);
-		set @startTime = GETDATE();
+        SET @schema_name = OBJECT_SCHEMA_NAME(@object_id, @db_id);
+        SET @table_name = OBJECT_NAME(@object_id, @db_id);
+        SET @msg
+            = CONCAT(
+                        'Rebuilding [',
+                        @db_name,
+                        '].[',
+                        @schema_name,
+                        '].[',
+                        @table_name,
+                        '] because of ',
+                        @forwarded_record_count,
+                        ' forwarded records (',
+                        @forwarded_record_percent,
+                        ')'
+                    );
 
-		set @msg = CONCAT('Rebuilding [', @db_name, '].[', @schema_name, '].[', @table_name, '] because of ', @forwarded_record_count, ' forwarded records (', @forwarded_record_percent, ')');
-		if @DryRun = 'N'
-		   and @LogToTable = 'Y'
-		begin
-			exec sp_BlitzFirst @LogMessage = @msg, @LogMessagePriority = @LogMessagePriority, @LogMessageFindingsGroup = @LogMessageFindingsGroup, @LogMessageFinding = @LogMessageFinding;
-		end;
-		raiserror(@msg, 10, 1) with nowait;
+        RAISERROR(@msg, 10, 1) WITH NOWAIT;
 
-		set @sql = 'ALTER TABLE ' + QUOTENAME(@db_name) + '.' + QUOTENAME(@schema_name) + '.' + QUOTENAME(@table_name) + ' REBUILD WITH (ONLINE = ON);';
-		if @DryRun = 'N'
-			execute sp_executesql @sql;
+        SET @sql
+            = N'ALTER TABLE ' + QUOTENAME(@db_name) + N'.' + QUOTENAME(@schema_name) + N'.' + QUOTENAME(@table_name)
+              + N' REBUILD WITH (ONLINE = ON);';
+        IF @DryRun = 0
+            EXECUTE sp_executesql @sql;
 
-		raiserror(@sql, 10, 1) with nowait;
+        RAISERROR(@sql, 10, 1) WITH NOWAIT;
 
-		set @msg = CONCAT('[', @db_name, '].[', @schema_name, '].[', @table_name, '] was rebuilt successfully');
-		if @DryRun = 'N'
-		   and @LogToTable = 'Y'
-		begin
-			exec sp_BlitzFirst @LogMessage = @msg, @LogMessagePriority = @LogMessagePriority, @LogMessageFindingsGroup = @LogMessageFindingsGroup, @LogMessageFinding = @LogMessageFinding;
-		end;
-		raiserror(@msg, 10, 1) with nowait;
+        SET @msg = CONCAT('[', @db_name, '].[', @schema_name, '].[', @table_name, '] was rebuilt successfully');
 
-		-- Remove processed heap from working table
-		if @DryRun = 'N'
-		begin
-			delete from FragmentedHeaps
-			where object_id = @object_id;
-		end;
+        RAISERROR(@msg, 10, 1) WITH NOWAIT;
 
-		if @DryRun = 'N'
-		begin
-			set @sql = QUOTENAME(@schema_name) + '.' + QUOTENAME(@table_name);
-			execute sp_recompile @sql;
-		end;
+        -- Remove processed heap from working table
+        IF @DryRun = 0
+        BEGIN
+            DELETE FROM FragmentedHeaps
+            WHERE object_id = @object_id;
+        END;
 
-		-- @TODO Clean up worktable when no more entries, so process can start over
-	end;
+        IF @DryRun = 0
+        BEGIN
+            SET @sql = QUOTENAME(@schema_name) + N'.' + QUOTENAME(@table_name);
+            EXECUTE sp_recompile @sql;
+        END;
 
-	close worklist;
-	deallocate worklist;
+    -- @TODO Clean up worktable when no more entries, so process can start over
+    END;
 
-	----------------------------------------------------------------------------------------------------
-	--// Log completing information                                                                 //--
-	----------------------------------------------------------------------------------------------------
+    CLOSE worklist;
+    DEALLOCATE worklist;
 
-	Logging:
-	set @EndMessage = 'Date and time: ' + CONVERT(nvarchar, GETDATE(), 120);
-	raiserror('%s', 10, 1, @EndMessage) with nowait;
+    ----------------------------------------------------------------------------------------------------
+    -- Log completing information
+    ----------------------------------------------------------------------------------------------------
 
-	raiserror(@EmptyLine, 10, 1) with nowait;
+    Logging:
+    SET @EndMessage = N'Date and time: ' + CONVERT(NVARCHAR, GETDATE(), 120);
+    RAISERROR('%s', 10, 1, @EndMessage) WITH NOWAIT;
 
-	if @ReturnCode <> 0
-	begin
-		return @ReturnCode;
-	end;
+    RAISERROR(@EmptyLine, 10, 1) WITH NOWAIT;
 
-end;
+    IF @ReturnCode <> 0
+    BEGIN
+        RETURN @ReturnCode;
+    END;
+
+END;
