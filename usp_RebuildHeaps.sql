@@ -92,11 +92,11 @@ BEGIN
     END;
 
     -------------------------------------------------------------------------------
-    -- Prepare our working table
+    -- Preparing our working table
     -------------------------------------------------------------------------------
     IF OBJECT_ID(N'FragmentedHeaps', N'U') IS NULL
     BEGIN
-        RAISERROR('Creating work table', 10, 1) WITH NOWAIT;
+        RAISERROR('Preparing our working table', 10, 1) WITH NOWAIT;
 
         CREATE TABLE FragmentedHeaps
         (
@@ -178,7 +178,7 @@ BEGIN
     END;
 
     -------------------------------------------------------------------------------
-    -- Start actual hard work
+    -- Starting actual hard work
     -------------------------------------------------------------------------------
     IF @DryRun = 1
         RAISERROR('Performing a dry run. Nothing will be executed or logged...', 10, 1) WITH NOWAIT;
@@ -238,41 +238,34 @@ BEGIN
         IF @DryRun = 0
             EXECUTE sp_executesql @sql;
 
-        RAISERROR(@sql, 10, 1) WITH NOWAIT;
-
-        SET @msg = CONCAT('[', @db_name, '].[', @schema_name, '].[', @table_name, '] was rebuilt successfully');
-
-        RAISERROR(@msg, 10, 1) WITH NOWAIT;
+        RAISERROR(@sql, 10, 1) WITH NOWAIT; -- Log executed command
 
         -- Remove processed heap from working table
         IF @DryRun = 0
         BEGIN
             DELETE FROM dbo.FragmentedHeaps
-            WHERE object_id = @object_id;  
-        END;
+            WHERE object_id = @object_id;
 
-        IF @DryRun = 0
-        BEGIN
-            SET @sql = QUOTENAME(@DatabaseName) + N'.' + QUOTENAME(@schema_name) + N'.' + QUOTENAME(@table_name);
-            EXECUTE sp_recompile @sql;
+            RAISERROR('Removing heap from working table', 10, 1) WITH NOWAIT;
         END;
-
-    -- @TODO Clean up worktable when no more entries, so process can start over
     END;
 
     CLOSE worklist;
     DEALLOCATE worklist;
 
     -- Delete working table when no rows present
-    DECLARE @rows INT = 0;
-    SELECT @rows = COUNT(*)
-    FROM dbo.FragmentedHeaps;
-
-    IF @rows = 0
+    IF @DryRun = 0
     BEGIN
-        DROP TABLE dbo.FragmentedHeaps;
-    RAISERROR('No rows in table. Cleaning up...', 10, 1) WITH NOWAIT;
-    END
+        DECLARE @rows INT = 0;
+        SELECT @rows = COUNT(*)
+        FROM dbo.FragmentedHeaps;
+    
+        IF @rows = 0
+        BEGIN
+            DROP TABLE dbo.FragmentedHeaps;
+            RAISERROR('No rows in table. Cleaning up...', 10, 1) WITH NOWAIT;
+        END;
+    END    
 
     ----------------------------------------------------------------------------------------------------
     -- Log information
