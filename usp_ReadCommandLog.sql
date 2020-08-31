@@ -25,13 +25,6 @@
                         @DatabaseName = 'HIX_PRODUCTIE', 
 						@Days = 7; -- Shows all work done in the past week
 
-    ----------------------------------------------------------------------------
-    DISCLAIMER: 
-    This code and information are provided "AS IS" without warranty of any kind,
-    either expressed or implied, including but not limited to the implied 
-    warranties or merchantability and/or fitness for a particular purpose.
-    ----------------------------------------------------------------------------
-
  ---------------------------------------------------------------------------------------------------------
  --  DATE       VERSION     AUTHOR                  DESCRIPTION                                        --
  ---------------------------------------------------------------------------------------------------------
