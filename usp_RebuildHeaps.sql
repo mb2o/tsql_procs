@@ -129,16 +129,13 @@ BEGIN
             RAISERROR('Looping through all heaps', 10, 1) WITH NOWAIT;
 
             SET @sql
-                = N'
-				DECLARE heaps CURSOR GLOBAL STATIC FOR
-					SELECT i.object_id 
-					FROM ' + QUOTENAME(@db_name) + N'.sys.indexes AS i 
-					INNER JOIN ' + QUOTENAME(@db_name)
+                = N'DECLARE heaps CURSOR GLOBAL STATIC FOR
+                SELECT i.object_id 
+                FROM ' + QUOTENAME(@db_name) + N'.sys.indexes AS i 
+                INNER JOIN ' + QUOTENAME(@db_name)
                   + N'.sys.objects AS o ON o.object_id = i.object_id
-					WHERE i.type_desc = ''HEAP''
-						AND o.type_desc = ''USER_TABLE''
-			';
-            RAISERROR(@sql, 10, 1) WITH NOWAIT;
+                WHERE i.type_desc = ''HEAP'' AND o.type_desc = ''USER_TABLE''';
+            --RAISERROR(@sql, 10, 1) WITH NOWAIT;
             EXECUTE sp_executesql @sql;
 
             OPEN heaps;
@@ -260,13 +257,13 @@ BEGIN
         DECLARE @rows INT = 0;
         SELECT @rows = COUNT(*)
         FROM dbo.FragmentedHeaps;
-    
+
         IF @rows = 0
         BEGIN
             DROP TABLE dbo.FragmentedHeaps;
             RAISERROR('No rows in table. Cleaning up...', 10, 1) WITH NOWAIT;
         END;
-    END    
+    END;
 
     ----------------------------------------------------------------------------------------------------
     -- Log information
