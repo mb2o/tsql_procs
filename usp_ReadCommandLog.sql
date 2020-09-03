@@ -1,7 +1,7 @@
 /********************************************************************************************************
     NAME:           usp_ReadCommandLog
 
-    SYNOPSIS:       Retrieves information from Ola Hallengren's Command Log table.
+    SYNOPSIS:       Retrieves useful information from Ola Hallengren's Command Log table.
 
     DEPENDENCIES:   Ola Hallengren's maintenance solution must be present.
                     
@@ -22,7 +22,7 @@
     LICENSE:        MIT
     
     USAGE:          EXEC dbo.usp_ReadCommandLog
-                        @DatabaseName = 'HIX_PRODUCTIE', 
+                        @DatabaseName = 'StackOverflow2013', 
 						@Days = 7; -- Shows all work done in the past week
 
  ---------------------------------------------------------------------------------------------------------
@@ -85,6 +85,22 @@ BEGIN
     FROM [dbo].[CommandLog]
     WHERE DatabaseName = @DatabaseName
           AND CommandType = 'UPDATE_STATISTICS'
+          AND DATEDIFF(DAY, StartTime, GETDATE()) < @Days;
+
+    -------------------------------------------------------------------------------
+    -- Backups
+    -------------------------------------------------------------------------------
+    SELECT StartTime,
+           EndTime,
+           DATEDIFF(SECOND, StartTime, EndTime) AS DurationInSec,
+           Command,
+           ROW_NUMBER() OVER (PARTITION BY CONCAT(QUOTENAME(ObjectName), '.', QUOTENAME(StatisticsName))
+                              ORDER BY CONCAT(QUOTENAME(ObjectName), '.', QUOTENAME(StatisticsName)),
+                                       StartTime
+                        ) AS Execution
+    FROM [dbo].[CommandLog]
+    WHERE DatabaseName = @DatabaseName
+          AND CommandType = 'BACKUP_LOG'
           AND DATEDIFF(DAY, StartTime, GETDATE()) < @Days;
 END;
 GO
