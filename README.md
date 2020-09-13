@@ -50,8 +50,7 @@ The number of days you wish to go back in time.
 ### Example
 
 ```sql
-EXEC dbo.usp_ReadCommandLog @DatabaseName = 'StackOverflow2013', 
-							@Days = 7; -- Shows all work done in the past week
+EXEC dbo.usp_ReadCommandLog @DatabaseName = 'StackOverflow2013', @Days = 7; -- Shows all work done in the past week
 ```
 
 ## usp_RebuildHeaps
