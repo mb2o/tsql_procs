@@ -1,11 +1,12 @@
 /********************************************************************************************************
+    
     NAME:           usp_RebuildHeaps
 
     SYNOPSIS:       A heap is a table without a clustered index. This proc can be used to 
                     rebuild those heaps on a database. Thereby alleviating the problems that arise 
-                    from large numbers of Forwarding Records on a heap.
+                    from large numbers of forwarding records on a heap.
 
-    DEPENDENCIES:   The following dependencies are required to execute this script:
+    DEPENDENCIES:   .
 
 	PARAMETERS:     Required:
                     @DatabaseName specifies on which database the heaps should be rebuilt.
@@ -36,11 +37,12 @@
                         @DatabaseName = 'HIX_PRODUCTIE', 
 						@@DryRun = 0;
 
- ---------------------------------------------------------------------------------------------------------
- --  DATE       VERSION     AUTHOR                  DESCRIPTION                                        --
- ---------------------------------------------------------------------------------------------------------
+    -----------------------------------------------------------------------------------------------
+     DATE       VERSION     AUTHOR                  DESCRIPTION
+    -----------------------------------------------------------------------------------------------
      20200103   1.0         Mark Boomaars			Open Sourced on GitHub
      20200831   1.1         Mark Boomaars           Changes to logic and logging
+
 *********************************************************************************************************/
 
 CREATE OR ALTER PROC dbo.usp_RebuildHeaps
@@ -92,7 +94,7 @@ BEGIN
     BEGIN
         RAISERROR('Preparing our working table', 10, 1) WITH NOWAIT;
 
-        CREATE TABLE FragmentedHeaps
+        CREATE TABLE dbo.FragmentedHeaps
         (
             object_id INT NOT NULL,
             page_count BIGINT NOT NULL,
@@ -129,7 +131,7 @@ BEGIN
                   + N'.sys.objects AS o ON o.object_id = i.object_id
                 WHERE i.type_desc = ''HEAP'' AND o.type_desc = ''USER_TABLE''';
             --RAISERROR(@sql, 10, 1) WITH NOWAIT;
-            EXECUTE sp_executesql @sql;
+            EXECUTE sp_executesql @stmt = @sql;
 
             OPEN heaps;
 
@@ -141,7 +143,7 @@ BEGIN
                 IF @@FETCH_STATUS <> 0
                     BREAK;
 
-                INSERT INTO FragmentedHeaps
+                INSERT INTO dbo.FragmentedHeaps
                 (
                     object_id,
                     page_count,
@@ -187,7 +189,7 @@ BEGIN
            record_count,
            forwarded_record_count,
            forwarded_record_percent
-    FROM FragmentedHeaps
+    FROM dbo.FragmentedHeaps
     ORDER BY forwarded_record_percent DESC;
 
     OPEN worklist;
@@ -227,7 +229,7 @@ BEGIN
             = N'ALTER TABLE ' + QUOTENAME(@db_name) + N'.' + QUOTENAME(@schema_name) + N'.' + QUOTENAME(@table_name)
               + N' REBUILD WITH (ONLINE = ON);';
         IF @DryRun = 0
-            EXECUTE sp_executesql @sql;
+            EXECUTE sp_executesql @stmt = @sql;
 
         RAISERROR(@sql, 10, 1) WITH NOWAIT; -- Log executed command
 
