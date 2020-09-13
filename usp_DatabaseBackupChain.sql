@@ -1,4 +1,5 @@
 /********************************************************************************************************
+    
     NAME:           usp_DatabaseBackupChain
 
     SYNOPSIS:       Creates a list of RESTORE statements that have to be executed in order to 
@@ -9,9 +10,9 @@
 	PARAMETERS:     Required:
 					@DatabaseName must be provided in order to function correctly. 
            
-					@RecoveryPoint is the point in time where to restore to
+					@RecoveryPoint is the point in time to where the database must be restored
 	
-	NOTES:			Based on a script by Hugo Kornelis posted at:
+	NOTES:			Based on a script posted by Hugo Kornelis at:
                     https://sqlserverfast.com/blog/hugo/2020/09/t-sql-tuesday-120-automated-restores/
 
     AUTHOR:         Mark Boomaars
@@ -22,13 +23,14 @@
 
     LICENSE:        MIT
 
-    USAGE:          EXEC dbo.usp_DatabaseBackupChain @DatabaseName = 'Playground',
+    USAGE:          EXEC dbo.usp_DatabaseBackupChain @DatabaseName = 'AdventureWorks',
 													 @RecoveryPoint = '2020-09-10T07:37:09';
 
 	--------------------------------------------------------------------------------------------
-	    DATE       VERSION     AUTHOR                DESCRIPTION                               
+	    DATE       VERSION     AUTHOR               DESCRIPTION                               
 	--------------------------------------------------------------------------------------------
-        20200911   1.0         Mark Boomaars		 Open Sourced on GitHub
+        20200911   1.0         Mark Boomaars		Open Sourced on GitHub
+
 *********************************************************************************************************/
 
 CREATE OR ALTER PROCEDURE usp_DatabaseBackupChain
@@ -41,40 +43,16 @@ BEGIN
     SET NOCOUNT ON;
 
     -------------------------------------------------------------------------------
-    -- Just a few working variables (DO NOT CHANGE THESE!)
+    -- Just a few working variables (DO NOT CHANGE THESE !)
     -------------------------------------------------------------------------------
-    DECLARE @PhysicalDeviceName NVARCHAR(255),
+    DECLARE @DiffBackup DATETIME,
+            @FileName NVARCHAR(255),
+            @FilePath NVARCHAR(255),
             @FullBackup DATETIME,
-            @DiffBackup DATETIME,
             @LastLog DATETIME,
-            @DataFileName sysname,
-            @DataFilePath sysname,
-            @LogFileName sysname,
-            @LogFilePath sysname;
-
-    -------------------------------------------------------------------------------
-    -- Determine logical names and full paths for data and log files of the 
-    -- specified database.
-    -------------------------------------------------------------------------------
-    SELECT @DataFileName = f.name,
-           @DataFilePath
-               = LEFT(f.physical_name, LEN(f.physical_name) - 4)
-                 + REPLACE(RIGHT(f.physical_name, 4), '.', '_Restored.')
-    FROM sys.master_files f
-        INNER JOIN sys.databases d
-            ON d.database_id = f.database_id
-    WHERE d.name = @DatabaseName
-          AND f.type_desc = 'ROWS';
-
-    SELECT @LogFileName = f.name,
-           @LogFilePath
-               = LEFT(f.physical_name, LEN(f.physical_name) - 4)
-                 + REPLACE(RIGHT(f.physical_name, 4), '.', '_Restored.')
-    FROM sys.master_files f
-        INNER JOIN sys.databases d
-            ON d.database_id = f.database_id
-    WHERE d.name = @DatabaseName
-          AND f.type_desc = 'LOG';
+            @Cur CURSOR,
+            @PhysicalDeviceName NVARCHAR(255),
+            @SQL NVARCHAR(MAX) = N'';
 
     -------------------------------------------------------------------------------
     -- Find last full backup before recovery point and then restore it.
@@ -90,11 +68,40 @@ BEGIN
           AND bs.backup_start_date < @RecoveryPoint
     ORDER BY bs.backup_start_date DESC;
 
-    PRINT 'RESTORE DATABASE ' + @DatabaseName + '_Restored FROM DISK = ''' + @PhysicalDeviceName
-          + ''' WITH FILE = 1, NORECOVERY, NOUNLOAD, REPLACE, STATS = 5, STOPAT = '''
-          + CAST(@RecoveryPoint AS VARCHAR(50)) + ''', '
-          + COALESCE('MOVE N''' + @DataFileName + ''' TO N''' + @DataFilePath + ''',', '') + N'MOVE N''' + @LogFileName
-          + N''' TO N''' + @LogFilePath + N''';';
+    SET @SQL += N'RESTORE DATABASE ' + @DatabaseName + N'_Restored FROM DISK = ''' + @PhysicalDeviceName
+                + N''' WITH FILE = 1, NORECOVERY, NOUNLOAD, REPLACE, STATS = 5, STOPAT = '''
+                + CAST(@RecoveryPoint AS VARCHAR(50)) + N'''';
+
+    BEGIN
+        SET @Cur = CURSOR FOR
+        SELECT f.name,
+               f.physical_name
+        FROM sys.master_files f
+            INNER JOIN sys.databases d
+                ON d.database_id = f.database_id
+        WHERE d.name = @DatabaseName;
+
+        OPEN @Cur;
+        FETCH NEXT FROM @Cur
+        INTO @FileName,
+             @FilePath;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @SQL += COALESCE(', MOVE N''' + @FileName + ''' TO N''' + 
+						LEFT(@FilePath, LEN(@FilePath) - 4) + 
+						REPLACE(RIGHT(@FilePath, 4), '.', '_Restored.') + '''', '');
+
+            FETCH NEXT FROM @Cur
+            INTO @FileName,
+                 @FilePath;
+        END;
+
+        CLOSE @Cur;
+        DEALLOCATE @Cur;
+    END;
+
+    PRINT @SQL;
 
     -------------------------------------------------------------------------------
     -- Find last differential backup before recovery point and restore it.
@@ -158,7 +165,7 @@ BEGIN
     DEALLOCATE c;
 
     -------------------------------------------------------------------------------
-    -- Perform the recovery.
+    -- Perform final recovery.
     -------------------------------------------------------------------------------
     PRINT 'RESTORE DATABASE ' + @DatabaseName + '_Restored WITH RECOVERY;';
 END;
